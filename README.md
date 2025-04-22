@@ -26,13 +26,9 @@ This repository contains a set of Ansible playbooks designed to automate the set
 
 1. **Clone the Repository**
 
-bash
-
-Copy code
-
 git clone https://github.com/hitachi-vantara/hv-playbooks-hiq.git
 
-cd hitachi-iq-1
+cd hv-playbooks-hiq-main
 
 2. **Set Up Inventory**
 
