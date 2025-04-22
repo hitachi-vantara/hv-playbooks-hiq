@@ -1,0 +1,54 @@
+---
+- name: Install JupyterHub on Kubernetes using Helm
+  hosts: control_plane[0]
+  become: yes
+  tasks:
+
+    - name: Ensure required packages are installed for Helm installation
+      package:
+        name: curl
+        state: present
+
+    - name: Check if Helm is installed
+      command: which helm
+      register: helm_check
+      failed_when: False
+
+    - name: Download Helm binary if not installed
+      shell: |
+        curl -fsSL https://get.helm.sh/helm-v3.12.3-linux-amd64.tar.gz -o /tmp/helm.tar.gz && \
+        tar -zxvf /tmp/helm.tar.gz -C /tmp && \
+        mv /tmp/linux-amd64/helm /usr/local/bin/helm
+      when: helm_check.rc != 0
+
+    - name: Add JupyterHub Helm repository
+      shell: /usr/local/bin/helm repo add jupyterhub https://jupyterhub.github.io/helm-chart/
+      args:
+        warn: false
+
+    - name: Update Helm repository
+      command: /usr/local/bin/helm repo update
+
+    - name: Fetch default values.yaml for JupyterHub
+      shell: /usr/local/bin/helm show values jupyterhub/jupyterhub > /tmp/values.yaml
+
+    - name: Update blockWithIptables to false in values.yaml
+      lineinfile:
+        path: /tmp/values.yaml
+        regexp: '^    blockWithIptables:.*$'
+        line: '    blockWithIptables: false'
+
+    - name: Install or upgrade JupyterHub using Helm
+      shell: |
+        /usr/local/bin/helm upgrade --cleanup-on-fail --install my-jupyter jupyterhub/jupyterhub \
+        --namespace jhub --create-namespace --values /tmp/values.yaml
+      args:
+        warn: false
+
+    - name: Verify JupyterHub installation
+      shell: kubectl get pods -n jhub
+      register: pod_status
+      retries: 12  # Retry for up to 2 minutes (12 retries * 10 seconds delay)
+      delay: 10
+      until: "'Running' in pod_status.stdout"
+

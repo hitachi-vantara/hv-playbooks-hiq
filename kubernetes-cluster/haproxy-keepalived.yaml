@@ -1,0 +1,53 @@
+---
+- name: Configure HAProxy and Keepalived for Kubernetes Control Plane High Availability
+  hosts: control_plane
+  become: yes
+  vars:
+    vip: "10.76.40.223"  # Virtual IP for the Kubernetes API server
+    priority: 100        # Default Keepalived priority (adjust per node)
+    interface: "ens17f0"    # Network interface to bind the VIP
+
+  tasks:
+    - name: Install HAProxy and Keepalived
+      package:
+        name:
+          - haproxy
+          - keepalived
+        state: present
+
+    - name: Configure HAProxy for Kubernetes API server load balancing
+      template:
+        src: templates/haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+      notify:
+        - restart haproxy
+
+    - name: Configure Keepalived
+      template:
+        src: templates/keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+      notify:
+        - restart keepalived
+
+    - name: Ensure HAProxy service is enabled and running
+      service:
+        name: haproxy
+        state: started
+        enabled: true
+
+    - name: Ensure Keepalived service is enabled and running
+      service:
+        name: keepalived
+        state: started
+        enabled: true
+
+  handlers:
+    - name: restart haproxy
+      service:
+        name: haproxy
+        state: restarted
+
+    - name: restart keepalived
+      service:
+        name: keepalived
+        state: restarted

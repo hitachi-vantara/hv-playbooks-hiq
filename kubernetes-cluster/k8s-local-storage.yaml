@@ -1,0 +1,57 @@
+---
+- name: Automate storage class creation on Kubernetes cluster
+  hosts: control_plane[0]
+  become: yes
+  tasks:
+
+    - name: Ensure kubectl is installed
+      command: which kubectl
+      register: kubectl_check
+      failed_when: kubectl_check.rc != 0
+      changed_when: False
+
+    - name: Wait for 'kubectl get nodes' to succeed
+      shell: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes"
+      register: kubectl_nodes
+      retries: 20
+      delay: 15
+      until: kubectl_nodes.rc == 0
+      changed_when: false
+
+    - name: Create namespace for local path storage
+      command: kubectl create namespace local-path-storage
+      register: ns_create
+      failed_when: ns_create.rc != 0 and '"AlreadyExists"' not in ns_create.stderr
+      changed_when: '"Created" in ns_create.stdout'
+
+    - name: Apply Local Path Provisioner manifest
+      command: kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
+      args:
+        chdir: /tmp
+
+    - name: Wait for Local Path Storage pods to be ready
+      shell: |
+        kubectl wait --for=condition=Ready -n local-path-storage pods --all --timeout=120s
+      register: wait_output
+      failed_when: "'condition met' not in wait_output.stdout"
+
+    - name: Verify the storage classes
+      command: kubectl get storageclass
+      register: storage_classes
+
+    - name: Patch the local-path storage class to make it the default
+      shell: |
+        kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      args:
+        warn: false
+      when: "'local-path' in storage_classes.stdout"
+
+    - name: Verify the default storage class
+      command: kubectl get storageclass -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
+      register: default_storageclass
+      failed_when: "'local-path' not in default_storageclass.stdout"
+      changed_when: False
+
+    - name: Output the result
+      debug:
+        msg: "Default storage class is: {{ default_storageclass.stdout }}"
