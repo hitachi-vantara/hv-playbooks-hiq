@@ -1,0 +1,56 @@
+---
+- name: Delete Kubernetes Cluster
+  hosts: control_plane, workers
+  become: yes
+  tasks:
+  
+    - name: Reset kubeadm configuration (if kubeadm was used)
+      command: kubeadm reset -f
+      ignore_errors: yes
+
+    - name: Remove .kube directory
+      file:
+        path: /root/.kube
+        state: absent
+
+    - name: Stop and disable kubelet service
+      systemd:
+        name: kubelet
+        enabled: no
+        state: stopped
+
+    - name: Remove Kubernetes packages
+      package:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - kubeadm
+        - kubelet
+        - kubectl
+
+    - name: Remove CNI configurations
+      file:
+        path: /etc/cni/net.d
+        state: absent
+
+    - name: Remove iptables rules set by kube-proxy
+      command: iptables -F
+      ignore_errors: yes
+
+    - name: Remove Kubernetes-related directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/etcd
+        - /var/lib/kubelet
+        - /var/lib/cni
+        - /opt/cni/bin
+
+    - name: Reboot the system to ensure all settings are reset
+      reboot:
+        msg: "Rebooting after Kubernetes cleanup"
+        connect_timeout: 5
+        reboot_timeout: 600
+

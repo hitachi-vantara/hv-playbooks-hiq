@@ -1,0 +1,25 @@
+---
+- name: Configure haproxy & Keepalived on control plane nodes
+  import_playbook: haproxy-keepalived.yaml
+
+- name: Create Single Control Plane Cluster
+  import_playbook: k8s-cluster-crio-v8.yaml
+
+- name: Add Control Plane nodes and worker nodes
+  import_playbook: k8s-worker-node-join-vars.yaml
+
+- name: Create local-path storage
+  import_playbook: k8s-local-storage.yaml
+
+- name: Install and configure Weka CSI Plugin
+  import_playbook: k8s-weka-csi-sc-secret.yaml
+
+- name: Install Jupyter Notebook
+  import_playbook: k8s-install-jupyter-notebook.yaml
+
+- name: Install minio object storage
+  import_playbook: k8s-install-minio.yaml
+
+- name: Install postgresql
+  import_playbook: k8s-install-postgres.yaml
+

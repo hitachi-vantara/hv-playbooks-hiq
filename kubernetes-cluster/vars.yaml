@@ -1,0 +1,17 @@
+kubernetes_version: "v1.30"
+cri_o_version: "1.26"
+load_balancer_ip: "10.76.40.223"
+vip_interface: "ens17f0"
+
+
+weka_namespace: "csi-wekafs"
+secret_name: "csi-wekafs-api-secret"
+storage_class_name: "storageclass-wekafs-dir-api"
+
+weka_username: "admin"
+weka_password: "admin"
+weka_endpoints:
+  - "172.31.41.54:14000"
+  - "172.31.47.152:14000"
+
+

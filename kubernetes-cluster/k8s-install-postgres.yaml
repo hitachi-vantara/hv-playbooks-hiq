@@ -1,0 +1,72 @@
+---
+- name: Deploy PostgreSQL on Kubernetes
+  hosts: control_plane[0]
+  become: true
+  vars:
+    postgresql_namespace: postgresql
+    postgresql_release_name: my-postgresql
+    helm_chart_repo: "https://charts.bitnami.com/bitnami"
+    helm_chart_name: "bitnami/postgresql"
+    postgresql_values_file: "/tmp/postgresql-values.yaml"
+
+  tasks:
+    - name: Ensure Helm is installed
+      ansible.builtin.command: which /usr/local/bin/helm
+      failed_when: result.rc != 0
+      changed_when: false
+      register: result
+
+    - name: Add Bitnami Helm Repository
+      ansible.builtin.command: >
+        /usr/local/bin/helm repo add bitnami {{ helm_chart_repo }}
+      args:
+        chdir: /usr/local/bin
+      environment:
+        PATH: /usr/local/bin:{{ ansible_env.PATH }}
+
+    - name: Update Helm Repositories
+      ansible.builtin.command: >
+        /usr/local/bin/helm repo update
+      args:
+        chdir: /usr/local/bin
+      environment:
+        PATH: /usr/local/bin:{{ ansible_env.PATH }}
+
+    - name: Create PostgreSQL namespace if not exists
+      ansible.builtin.command: >
+        kubectl create namespace {{ postgresql_namespace }}
+      args:
+        warn: false
+
+    - name: Generate PostgreSQL custom values file
+      ansible.builtin.copy:
+        dest: "{{ postgresql_values_file }}"
+        content: |
+          primary:
+            persistence:
+              enabled: true
+              size: 8Gi
+          metrics:
+            enabled: true
+          global:
+            postgresql:
+              username: admin
+              password: adminpassword
+              database: mydatabase
+
+    - name: Deploy PostgreSQL using Helm
+      ansible.builtin.command: >
+        /usr/local/bin/helm upgrade --install {{ postgresql_release_name }}
+        {{ helm_chart_name }} --namespace {{ postgresql_namespace }}
+        --values {{ postgresql_values_file }}
+      args:
+        chdir: /usr/local/bin
+      environment:
+        PATH: /usr/local/bin:{{ ansible_env.PATH }}
+
+    - name: Wait for PostgreSQL pods to be ready
+      ansible.builtin.command: >
+        kubectl wait --namespace {{ postgresql_namespace }}
+        --for=condition=ready pod -l app.kubernetes.io/instance={{ postgresql_release_name }}
+        --timeout=300s
+

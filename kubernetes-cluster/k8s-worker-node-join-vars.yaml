@@ -1,0 +1,67 @@
+---
+- name: Retrieve Join Commands for Additional Nodes
+  hosts: control_plane[0]
+  become: yes
+  vars_files:
+    - vars.yaml
+
+  tasks:
+    - name: Generate worker node join command
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: worker_join_cmd_output
+      changed_when: false
+
+    - name: Save worker node join command to file
+      ansible.builtin.copy:
+        dest: /tmp/worker_join_cmd.sh
+        content: "{{ worker_join_cmd_output.stdout }}"
+      delegate_to: localhost
+
+    - name: Upload certificates for control plane nodes
+      ansible.builtin.command: kubeadm init phase upload-certs --upload-certs
+      register: cert_key_output
+      changed_when: false
+
+    - name: Extract certificate key without brackets or quotes
+      ansible.builtin.set_fact:
+        cert_key: "{{ cert_key_output.stdout_lines[-1] | trim }}"
+
+    - name: Generate control plane node join command
+      ansible.builtin.set_fact:
+        control_plane_join_cmd: "{{ worker_join_cmd_output.stdout }} --control-plane --certificate-key {{ cert_key }}"
+
+    - name: Save control plane node join command to file
+      ansible.builtin.copy:
+        dest: /tmp/control_plane_join_cmd.sh
+        content: "{{ control_plane_join_cmd }}"
+      delegate_to: localhost
+
+#---
+- name: Join Additional Control Plane Nodes
+  hosts: control_plane[1:]
+  become: yes
+  vars_files:
+    - vars.yaml
+
+  tasks:
+    - name: Execute control plane join command
+      ansible.builtin.shell: "{{ lookup('file', '/tmp/control_plane_join_cmd.sh') }}"
+      become: true
+
+    - name: Set up KUBECONFIG for root user
+      ansible.builtin.shell: |
+        mkdir -p $HOME/.kube
+        cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        chown $(id -u):$(id -g) $HOME/.kube/config
+      become: true
+
+- name: Join Worker Nodes
+  hosts: workers
+  become: yes
+  vars_files:
+    - vars.yaml
+
+  tasks:
+    - name: Execute worker join command
+      ansible.builtin.shell: "{{ lookup('file', '/tmp/worker_join_cmd.sh') }}"
+      become: true

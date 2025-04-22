@@ -1,0 +1,47 @@
+---
+- name: Deploy MinIO on Kubernetes
+  hosts: control_plane[0]  # Replace with your actual control plane node group or host
+  become: yes
+  tasks:
+    - name: Add MinIO Operator Helm repo
+      ansible.builtin.command:
+        cmd: "/usr/local/bin/helm repo add minio-operator https://operator.min.io"
+      register: add_helm_repo
+      changed_when: "'has been added' in add_helm_repo.stdout or 'already exists' in add_helm_repo.stderr"
+    
+    - name: Update Helm repositories
+      ansible.builtin.command:
+        cmd: "/usr/local/bin/helm repo update"
+      changed_when: False
+
+    - name: Install MinIO Operator
+      ansible.builtin.command:
+        cmd: "/usr/local/bin/helm install --namespace minio-operator --create-namespace operator minio-operator/operator"
+      register: install_operator
+      changed_when: "'STATUS: deployed' in install_operator.stdout or 'already exists' in install_operator.stderr"
+
+    - name: Download MinIO tenant values file
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/minio/operator/master/helm/tenant/values.yaml"
+        dest: "/tmp/values.yaml"
+
+    - name: Install MinIO Tenant
+      ansible.builtin.command:
+        cmd: "/usr/local/bin/helm install --namespace minio --create-namespace --values /tmp/values.yaml minio minio-operator/tenant"
+      register: install_tenant
+      changed_when: "'STATUS: deployed' in install_tenant.stdout or 'already exists' in install_tenant.stderr"
+
+    - name: Wait for MinIO Tenant pods to be running
+      ansible.builtin.wait_for:
+        path: /tmp/values.yaml
+        delay: 10  # Wait before starting the first check
+        timeout: 60  # Maximum time to wait for the status
+    - name: Wait for all MinIO Tenant pods to be ready
+      ansible.builtin.command:
+        cmd: "kubectl get pods -n minio"
+      register: pod_status
+      retries: 12  # Retry for up to 2 minutes (12 retries * 10 seconds delay)
+      delay: 10
+      until: "'Running' in pod_status.stdout and 'minio' in pod_status.stdout"
+
+

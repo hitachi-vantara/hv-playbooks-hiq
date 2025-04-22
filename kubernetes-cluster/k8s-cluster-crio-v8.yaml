@@ -1,0 +1,111 @@
+---
+- name: Kubernetes Cluster Setup on RHEL 8 hosts with CRI-O
+  hosts: control_plane, workers
+  become: yes
+  vars_files:
+    - vars.yaml
+
+  tasks:
+    - name: Disable swap (required for Kubernetes)
+      ansible.builtin.command: swapoff -a
+      become: true
+
+    - name: Ensure swap is disabled on boot
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '(^.*swap.*$)'
+        replace: '#\1'
+
+    - name: Add Kubernetes repository
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/rpm/repodata/repomd.xml.key
+        mode: '0644'
+
+    - name: Add CRI-O repository
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/cri-o.repo
+        content: |
+          [cri-o]
+          name=CRI-O
+          baseurl=https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/{{ cri_o_version }}/CentOS_8/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/{{ cri_o_version }}/CentOS_8/repodata/repomd.xml.key
+        mode: '0644'
+
+    - name: Start and enable CRI-O service
+      ansible.builtin.systemd:
+        name: crio
+        enabled: true
+        state: started
+
+    - name: Install Kubernetes packages (kubeadm, kubelet, kubectl)
+      ansible.builtin.yum:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+      notify: Enable and start kubelet
+
+    - name: Configure sysctl for Kubernetes networking
+      ansible.builtin.sysctl:
+        name: net.bridge.bridge-nf-call-iptables
+        value: 1
+        state: present
+        reload: yes
+
+    - name: Enable kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Enable and start kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+#---
+- name: Initialize Control Plane
+  hosts: control_plane[0]  # Only on the first control plane node
+  become: yes
+  vars_files:
+    - vars.yaml
+
+  tasks:
+    - name: Initialize Kubernetes control plane with CRI-O and custom network CIDR
+      ansible.builtin.command: >
+        kubeadm init --control-plane-endpoint="{{ load_balancer_ip }}:8443"
+        --upload-certs --apiserver-advertise-address={{ ansible_host }}
+        --pod-network-cidr=10.244.0.0/16
+      register: kubeadm_init
+      changed_when: "'initialized' in kubeadm_init.stdout"
+      when: inventory_hostname == groups['control_plane'][0]  # Run only on the first control plane node
+
+    - name: Set up KUBECONFIG for root user
+      ansible.builtin.shell: |
+        mkdir -p $HOME/.kube
+        sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        sudo chown $(id -u):$(id -g) $HOME/.kube/config
+      become: true
+
+    - name: Apply Antrea pod network
+      ansible.builtin.command: >
+        kubectl apply -f https://raw.githubusercontent.com/antrea-io/antrea/main/build/yamls/antrea.yml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      become: true
+      retries: 5
+      delay: 10
+      register: antrea_apply
+      until: antrea_apply.rc == 0
